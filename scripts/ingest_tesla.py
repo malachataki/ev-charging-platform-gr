@@ -46,7 +46,9 @@ def fetch_ocm_greece() -> list:
         "output": "json",
         "countrycode": "GR",
         "maxresults": 500,
-        "compact": "true",
+        # compact=true strips out OperatorInfo/ConnectionType (leaves bare numeric IDs
+        # instead) - we need the human-readable titles to identify Tesla and connector
+        # types, so we deliberately do NOT set compact=true here.
         "verbose": "false",
     }
     resp = requests.get(OCM_URL, params=params, headers={"X-API-Key": api_key}, timeout=HTTP_TIMEOUT)
