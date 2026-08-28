@@ -5,7 +5,8 @@ Live χάρτης δημόσιων φορτιστών EV στην Ελλάδα, 
 
 ## Αρχιτεκτονική
 
-- **Ingestion** (`scripts/ingest.py`): τρέχει σε GitHub Actions κάθε 20 λεπτά, κατεβάζει το static +
+- **Ingestion** (`scripts/ingest.py`): τρέχει σε GitHub Actions κάθε 10 λεπτά (ίδιο διάστημα με την
+  ανανέωση των dynamic δεδομένων του ΥΜΕ), κατεβάζει το static +
   dynamic ZIP από το ΥΜΕ, τα ενοποιεί, και γράφει ένα συμπαγές JSON σε Cloudflare Workers KV.
 - **API + frontend** (`src/worker.js`, `public/index.html`): Cloudflare Worker (Free plan) που
   σερβίρει το `/api/chargers` από το KV και τη σελίδα του χάρτη (Leaflet).
@@ -17,9 +18,9 @@ Live χάρτης δημόσιων φορτιστών EV στην Ελλάδα, 
 
 ### 1. Δημιούργησε το GitHub repo
 
-Ανέβασε αυτόν τον φάκελο σε ένα νέο repo στο GitHub σου (public repo συνιστάται, ώστε τα GitHub
-Actions minutes να είναι απεριόριστα δωρεάν· σε private repo έχεις 2.000 λεπτά/μήνα δωρεάν, που
-μπορεί να μην αρκούν αν τρέχει κάθε 20 λεπτά).
+Ανέβασε αυτόν τον φάκελο σε ένα νέο repo στο GitHub σου (**public repo συνιστάται** — με 10λεπτο
+interval τρέχουμε ~4.320 φορές/μήνα, που σε private repo θα ξεπερνούσε εύκολα το δωρεάν όριο των
+2.000 λεπτών/μήνα· σε public repo τα GitHub Actions minutes είναι απεριόριστα δωρεάν).
 
 ### 2. Cloudflare API Token
 
@@ -47,7 +48,7 @@ account σου.)
 ### 5. Τρέξε το ingestion μία φορά χειροκίνητα
 
 Στο repo: **Actions → Ingest EV charger data → Run workflow**. Ελέγχεις τα logs — πρέπει να δεις
-"Payload size: ~2100 KB" και "Done." στο τέλος. Μετά από αυτό, τρέχει μόνο του κάθε 20 λεπτά.
+"Payload size: ..." και "Done." στο τέλος. Μετά από αυτό, τρέχει μόνο του κάθε 10 λεπτά.
 
 ### 6. Deploy το Worker
 

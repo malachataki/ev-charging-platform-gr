@@ -28,7 +28,9 @@ STATIC_URL = "https://electrokinisi.yme.gov.gr/public/static_files/GR.IDRO.stati
 DYNAMIC_URL = "https://electrokinisi.yme.gov.gr/public/static_files/GR.IDRO.dynamic.data.latest.json.zip"
 KV_KEY = "chargers"
 KV_HISTORY_KEY = "usage_history"
-HISTORY_MAX_ENTRIES = 2200  # ~30 days at one entry per 20 minutes
+KV_EVSE_USAGE_KEY = "evse_usage"
+HISTORY_MAX_ENTRIES = 4320  # ~30 days at one entry per 10 minutes
+SAMPLE_INTERVAL_MINUTES = 10  # must match the cron schedule in .github/workflows/ingest.yml
 
 HTTP_TIMEOUT = 60
 
@@ -67,7 +69,7 @@ def to_float(value):
         return None
 
 
-def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
+def build_compact_dataset(static_data: dict, dynamic_index: dict, usage_state: dict | None = None) -> dict:
     from collections import Counter
 
     locations_out = []
@@ -118,11 +120,16 @@ def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
                 })
                 total_connectors += 1
 
-            evses_out.append({
+            evse_record = {
                 "uid": uid,
                 "status": status,
                 "connectors": connectors_out,
-            })
+            }
+            if usage_state:
+                usage = usage_estimate_for(usage_state, uid)
+                if usage:
+                    evse_record["usage"] = usage
+            evses_out.append(evse_record)
             total_evses += 1
             if status == "AVAILABLE":
                 available_evses += 1
@@ -224,6 +231,47 @@ def append_usage_history(dataset: dict) -> None:
     kv_put_json(KV_HISTORY_KEY, history)
 
 
+def update_evse_usage(dynamic_index: dict, now_iso: str) -> dict:
+    """Maintain a per-EVSE running tally of observed samples, so we can estimate
+    real usage hours per charger. This is a genuine measurement built from actual
+    snapshots (one every SAMPLE_INTERVAL_MINUTES) — not a guess — but it IS a
+    sampled estimate: a charging session shorter than the sampling interval can be
+    missed or under/over-counted, and it only covers time since "since" below.
+
+    Stored state shape:
+      {"since": "<iso timestamp of first run>",
+       "evses": {"<uid>": {"s": <samples seen>, "c": <samples seen CHARGING>}}}
+    """
+    state = kv_get_json(KV_EVSE_USAGE_KEY)
+    if not isinstance(state, dict) or "evses" not in state:
+        state = {"since": now_iso, "evses": {}}
+
+    evses = state["evses"]
+    for uid, info in dynamic_index.items():
+        entry = evses.setdefault(uid, {"s": 0, "c": 0})
+        entry["s"] += 1
+        if info.get("status") == "CHARGING":
+            entry["c"] += 1
+
+    kv_put_json(KV_EVSE_USAGE_KEY, state)
+    return state
+
+
+def usage_estimate_for(evse_usage_state: dict, uid: str) -> dict | None:
+    entry = evse_usage_state.get("evses", {}).get(uid)
+    if not entry or entry["s"] == 0:
+        return None
+
+    hours_since_tracking = round(entry["c"] * SAMPLE_INTERVAL_MINUTES / 60, 1)
+    fraction_charging = round(entry["c"] / entry["s"], 3)
+    return {
+        "since": evse_usage_state.get("since"),
+        "samples": entry["s"],
+        "hours_charging": hours_since_tracking,
+        "fraction_charging": fraction_charging,
+    }
+
+
 def main():
     print("Fetching static dataset...")
     static_data = fetch_zip_json(STATIC_URL)
@@ -234,8 +282,14 @@ def main():
     dynamic_index = build_dynamic_index(dynamic_data)
     print(f"  {len(dynamic_index)} live EVSE statuses")
 
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    print("Updating per-EVSE usage counters...")
+    usage_state = update_evse_usage(dynamic_index, now_iso)
+    print(f"  tracking {len(usage_state['evses'])} EVSEs since {usage_state['since']}")
+
     print("Merging...")
-    dataset = build_compact_dataset(static_data, dynamic_index)
+    dataset = build_compact_dataset(static_data, dynamic_index, usage_state)
     print(f"  {dataset['counts']}")
 
     print("Pushing to Cloudflare KV...")

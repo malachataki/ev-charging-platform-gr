@@ -2,8 +2,9 @@ name: Ingest EV charger data
 
 on:
   schedule:
-    # Every 20 minutes. GitHub may delay this by a few minutes under load.
-    - cron: "*/20 * * * *"
+    # Every 10 minutes — matches the source's own refresh cadence, no point polling faster.
+    # GitHub may delay this by a few minutes under load.
+    - cron: "*/10 * * * *"
   workflow_dispatch: {}
 
 jobs:

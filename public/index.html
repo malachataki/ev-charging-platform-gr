@@ -219,6 +219,7 @@
   .popup-title { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
   .popup-sub { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
   .evse-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 3px 0; border-bottom: 1px dashed #e5e5e5; }
+  .usage-note { font-size: 10.5px; color: var(--muted); padding: 0 0 4px 14px; }
   .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
   .status-AVAILABLE { background: #16a34a; }
   .status-CHARGING { background: #2563eb; }
@@ -370,12 +371,21 @@ function occupancyLine(loc) {
   return `<div class="occupancy-line ${cls}">Διαθέσιμοι τώρα: ${available} / ${total}</div>`;
 }
 
+const MIN_USAGE_SAMPLES = 3; // don't show a usage estimate until we've actually observed it a few times
+
+function usageNote(usage) {
+  if (!usage || usage.samples < MIN_USAGE_SAMPLES) return "";
+  const sinceDate = new Date(usage.since).toLocaleDateString("el-GR");
+  const pct = Math.round(usage.fraction_charging * 100);
+  return `<div class="usage-note">⏱ ~${usage.hours_charging} ώρες σε φόρτιση (${pct}% των μετρήσεων) — εκτίμηση από ${sinceDate}</div>`;
+}
+
 function buildPopup(loc) {
   const evseRows = loc.evses.map(e => {
     const conn = e.connectors.map(c => `${STANDARD_LABELS[c.standard] || c.standard}${c.kw ? " · " + c.kw + "kW" : ""}`).join(", ");
     const statusClass = "status-" + (e.status || "UNKNOWN");
     const statusLabel = STATUS_LABELS[e.status] || e.status;
-    return `<div class="evse-row"><span><span class="status-dot ${statusClass}"></span>${conn}</span><span>${statusLabel}</span></div>`;
+    return `<div class="evse-row"><span><span class="status-dot ${statusClass}"></span>${conn}</span><span>${statusLabel}</span></div>${usageNote(e.usage)}`;
   }).join("");
 
   return `
