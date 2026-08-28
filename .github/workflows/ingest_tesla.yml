@@ -1,0 +1,29 @@
+name: Ingest Tesla Superchargers (Open Charge Map)
+
+on:
+  schedule:
+    # Once a day - Tesla station locations barely change, and this respects
+    # Open Charge Map's fair-use limits. GitHub may delay this by a few minutes.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ingest-tesla:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Tesla ingestion
+        env:
+          OCM_API_KEY: ${{ secrets.OCM_API_KEY }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_KV_NAMESPACE_ID: ${{ secrets.CF_KV_NAMESPACE_ID }}
+        run: python scripts/ingest_tesla.py
