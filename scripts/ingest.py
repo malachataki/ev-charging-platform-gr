@@ -29,7 +29,7 @@ DYNAMIC_URL = "https://electrokinisi.yme.gov.gr/public/static_files/GR.IDRO.dyna
 KV_KEY = "chargers"
 KV_HISTORY_KEY = "usage_history"
 KV_EVSE_USAGE_KEY = "evse_usage"
-HISTORY_MAX_ENTRIES = 4320  # ~30 days at one entry per 10 minutes
+KV_TESLA_KEY = "tesla_chargers"  # written separately (once/day) by scripts/ingest_tesla.py
 SAMPLE_INTERVAL_MINUTES = 10  # must match the cron schedule in .github/workflows/ingest.yml
 
 HTTP_TIMEOUT = 60
@@ -211,7 +211,8 @@ def append_usage_history(dataset: dict) -> None:
 
     This is the seed for a future *real* "typical usage" feature: we do not
     fabricate any historical trend, we just start honestly recording what
-    actually happens, one snapshot at a time.
+    actually happens, one snapshot at a time. Kept indefinitely (no trimming)
+    so history is never lost.
     """
     history = kv_get_json(KV_HISTORY_KEY)
     if not isinstance(history, list):
@@ -224,9 +225,6 @@ def append_usage_history(dataset: dict) -> None:
         "charging": counts["charging_evses"],
         "available": counts["available_evses"],
     })
-
-    if len(history) > HISTORY_MAX_ENTRIES:
-        history = history[-HISTORY_MAX_ENTRIES:]
 
     kv_put_json(KV_HISTORY_KEY, history)
 
@@ -291,6 +289,14 @@ def main():
     print("Merging...")
     dataset = build_compact_dataset(static_data, dynamic_index, usage_state)
     print(f"  {dataset['counts']}")
+
+    # Tesla locations are refreshed separately (once/day, see ingest_tesla.py) since they
+    # rarely change and come from a different source (Open Charge Map). We just splice in
+    # whatever is already in KV here - this is a cheap read, no extra Open Charge Map calls.
+    tesla_locations = kv_get_json(KV_TESLA_KEY)
+    if isinstance(tesla_locations, list):
+        dataset["tesla_locations"] = tesla_locations
+        print(f"  {len(tesla_locations)} Tesla locations included")
 
     print("Pushing to Cloudflare KV...")
     push_to_kv(dataset)
