@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EV Charging Platform — Χάρτης Φορτιστών Ελλάδας</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css" />
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css" />
+<style>
+  :root {
+    --bg: #f4f6f5;
+    --panel: #ffffff;
+    --text: #16231f;
+    --muted: #5c6b66;
+    --border: #e1e6e4;
+    --accent: #16a34a;
+    --accent-dark: #0f7a37;
+    --danger: #dc2626;
+    --warn: #d97706;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    background: #0f1f18;
+    color: #fff;
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    z-index: 1000;
+  }
+  header h1 {
+    font-size: 16px;
+    margin: 0;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  header .stats {
+    font-size: 12px;
+    color: #b9c7c1;
+  }
+  .app {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+  }
+  #sidebar {
+    width: 320px;
+    max-width: 90vw;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 14px;
+    overflow-y: auto;
+    z-index: 999;
+  }
+  #sidebar h2 {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    margin: 16px 0 8px;
+  }
+  #sidebar h2:first-child { margin-top: 0; }
+  input[type="text"], select {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: #fafcfb;
+  }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 5px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    background: #fafcfb;
+    color: var(--muted);
+    user-select: none;
+  }
+  .chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  #map { flex: 1; }
+  .legend {
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  #results-count {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .popup-title { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
+  .popup-sub { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+  .evse-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 3px 0; border-bottom: 1px dashed #e5e5e5; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+  .status-AVAILABLE { background: #16a34a; }
+  .status-CHARGING { background: #2563eb; }
+  .status-INOPERATIVE, .status-OUTOFORDER, .status-BLOCKED { background: #dc2626; }
+  .status-UNKNOWN, .status-RESERVED { background: #9ca3af; }
+  a.reset-link { color: var(--accent-dark); font-size: 12px; cursor: pointer; }
+  #loading {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(244,246,245,0.85); font-size: 14px; color: var(--muted); z-index: 500;
+  }
+  .marker-fast { background: #2563eb; }
+  .marker-slow { background: #16a34a; }
+  .charge-pin {
+    width: 16px; height: 16px; border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg);
+    border: 2px solid #fff;
+    box-shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ EV Charging Platform — Ελλάδα</h1>
+  <div class="stats" id="header-stats">Φόρτωση δεδομένων...</div>
+</header>
+
+<div class="app">
+  <div id="sidebar">
+    <h2>Αναζήτηση</h2>
+    <input type="text" id="search" placeholder="Όνομα, διεύθυνση ή πόλη...">
+
+    <h2>Πάροχος</h2>
+    <select id="operator-select">
+      <option value="">Όλοι οι πάροχοι</option>
+    </select>
+
+    <h2>Τύπος βύσματος</h2>
+    <div class="chip-row" id="standard-chips"></div>
+
+    <h2>Ελάχιστη ισχύς</h2>
+    <div class="chip-row">
+      <div class="chip" data-minkw="0">Όλες</div>
+      <div class="chip" data-minkw="22">≥ 22 kW</div>
+      <div class="chip" data-minkw="50">≥ 50 kW (DC)</div>
+      <div class="chip" data-minkw="150">≥ 150 kW</div>
+    </div>
+
+    <h2>Διαθεσιμότητα</h2>
+    <div class="chip-row">
+      <div class="chip active" data-avail="all">Όλα</div>
+      <div class="chip" data-avail="available">Έχει διαθέσιμο τώρα</div>
+    </div>
+
+    <h2>Υπόμνημα</h2>
+    <div class="legend">
+      <div><span class="dot" style="background:#2563eb"></span>DC γρήγορη φόρτιση (≥50kW)</div>
+      <div><span class="dot" style="background:#16a34a"></span>AC φόρτιση</div>
+    </div>
+
+    <div id="results-count">—</div>
+    <div style="margin-top:8px;"><span class="reset-link" id="reset-filters">Καθαρισμός φίλτρων</span></div>
+  </div>
+
+  <div style="position:relative; flex:1;">
+    <div id="map"></div>
+    <div id="loading">Φόρτωση φορτιστών...</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+<script>
+const STANDARD_LABELS = {
+  IEC_62196_T2: "Type 2",
+  IEC_62196_T2_COMBO: "CCS (Combo 2)",
+  CHADEMO: "CHAdeMO",
+  DOMESTIC_F: "Schuko",
+};
+const STATUS_LABELS = {
+  AVAILABLE: "Διαθέσιμος",
+  CHARGING: "Φορτίζει",
+  INOPERATIVE: "Εκτός λειτουργίας",
+  OUTOFORDER: "Βλάβη",
+  UNKNOWN: "Άγνωστο",
+  BLOCKED: "Μπλοκαρισμένος",
+  RESERVED: "Κρατημένος",
+};
+
+let ALL_LOCATIONS = [];
+let filters = { text: "", operator: "", standard: "", minKw: 0, availableOnly: false };
+
+const map = L.map("map", { zoomControl: true }).setView([38.4, 23.7], 7);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: "&copy; OpenStreetMap contributors",
+}).addTo(map);
+
+const clusterGroup = L.markerClusterGroup({ maxClusterRadius: 45, spiderfyOnMaxZoom: true });
+map.addLayer(clusterGroup);
+
+function pinIcon(fast) {
+  return L.divIcon({
+    className: "",
+    html: `<div class="charge-pin ${fast ? "marker-fast" : "marker-slow"}"></div>`,
+    iconSize: [16, 16],
+    iconAnchor: [8, 14],
+    popupAnchor: [0, -14],
+  });
+}
+
+function locationHasAvailable(loc) {
+  return loc.evses.some(e => e.status === "AVAILABLE");
+}
+
+function buildPopup(loc) {
+  const evseRows = loc.evses.map(e => {
+    const conn = e.connectors.map(c => `${STANDARD_LABELS[c.standard] || c.standard}${c.kw ? " · " + c.kw + "kW" : ""}`).join(", ");
+    const statusClass = "status-" + (e.status || "UNKNOWN");
+    const statusLabel = STATUS_LABELS[e.status] || e.status;
+    return `<div class="evse-row"><span><span class="status-dot ${statusClass}"></span>${conn}</span><span>${statusLabel}</span></div>`;
+  }).join("");
+
+  return `
+    <div class="popup-title">${escapeHtml(loc.name || "Άγνωστο σημείο")}</div>
+    <div class="popup-sub">${escapeHtml(loc.address || "")}${loc.city ? ", " + escapeHtml(loc.city) : ""}<br>Πάροχος: ${escapeHtml(loc.operator || "-")}</div>
+    ${evseRows}
+    <div style="margin-top:8px;"><a href="https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}" target="_blank" rel="noopener" style="font-size:12px;">Οδηγίες πλοήγησης →</a></div>
+  `;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+
+function passesFilters(loc) {
+  if (filters.operator && loc.operator !== filters.operator) return false;
+  if (filters.minKw && (!loc.max_kw || loc.max_kw < filters.minKw)) return false;
+  if (filters.standard) {
+    const hasStandard = loc.evses.some(e => e.connectors.some(c => c.standard === filters.standard));
+    if (!hasStandard) return false;
+  }
+  if (filters.availableOnly && !locationHasAvailable(loc)) return false;
+  if (filters.text) {
+    const hay = `${loc.name} ${loc.address} ${loc.city}`.toLowerCase();
+    if (!hay.includes(filters.text)) return false;
+  }
+  return true;
+}
+
+function renderMarkers() {
+  clusterGroup.clearLayers();
+  let shown = 0;
+  for (const loc of ALL_LOCATIONS) {
+    if (!passesFilters(loc)) continue;
+    shown++;
+    const fast = (loc.max_kw || 0) >= 50;
+    const marker = L.marker([loc.lat, loc.lng], { icon: pinIcon(fast) });
+    marker.bindPopup(buildPopup(loc));
+    clusterGroup.addLayer(marker);
+  }
+  document.getElementById("results-count").textContent = `${shown.toLocaleString("el-GR")} από ${ALL_LOCATIONS.length.toLocaleString("el-GR")} τοποθεσίες`;
+}
+
+function populateOperatorSelect(operators) {
+  const sel = document.getElementById("operator-select");
+  for (const op of operators) {
+    const opt = document.createElement("option");
+    opt.value = op;
+    opt.textContent = op;
+    sel.appendChild(opt);
+  }
+}
+
+function populateStandardChips(standards) {
+  const container = document.getElementById("standard-chips");
+  const allChip = document.createElement("div");
+  allChip.className = "chip active";
+  allChip.textContent = "Όλα";
+  allChip.dataset.standard = "";
+  container.appendChild(allChip);
+  for (const std of standards) {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    chip.textContent = STANDARD_LABELS[std] || std;
+    chip.dataset.standard = std;
+    container.appendChild(chip);
+  }
+  container.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    [...container.children].forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    filters.standard = chip.dataset.standard;
+    renderMarkers();
+  });
+}
+
+async function init() {
+  try {
+    const res = await fetch("/api/chargers");
+    const data = await res.json();
+    ALL_LOCATIONS = data.locations || [];
+
+    document.getElementById("header-stats").textContent =
+      `${data.counts.locations.toLocaleString("el-GR")} τοποθεσίες · ${data.counts.evses.toLocaleString("el-GR")} φορτιστές · ενημέρωση: ${new Date(data.generated_at).toLocaleString("el-GR")}`;
+
+    populateOperatorSelect(data.operators || []);
+    populateStandardChips(data.connector_standards || []);
+    renderMarkers();
+    document.getElementById("loading").style.display = "none";
+  } catch (err) {
+    document.getElementById("loading").textContent = "Σφάλμα φόρτωσης δεδομένων. Δοκιμάστε ξανά αργότερα.";
+    console.error(err);
+  }
+}
+
+document.getElementById("search").addEventListener("input", (e) => {
+  filters.text = e.target.value.trim().toLowerCase();
+  renderMarkers();
+});
+document.getElementById("operator-select").addEventListener("change", (e) => {
+  filters.operator = e.target.value;
+  renderMarkers();
+});
+document.querySelectorAll("[data-minkw]").forEach(chip => {
+  chip.addEventListener("click", () => {
+    chip.parentElement.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    filters.minKw = Number(chip.dataset.minkw);
+    renderMarkers();
+  });
+});
+document.querySelectorAll("[data-avail]").forEach(chip => {
+  chip.addEventListener("click", () => {
+    chip.parentElement.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
+    chip.classList.add("active");
+    filters.availableOnly = chip.dataset.avail === "available";
+    renderMarkers();
+  });
+});
+document.getElementById("reset-filters").addEventListener("click", () => {
+  filters = { text: "", operator: "", standard: "", minKw: 0, availableOnly: false };
+  document.getElementById("search").value = "";
+  document.getElementById("operator-select").value = "";
+  document.querySelectorAll(".chip-row .chip").forEach(c => c.classList.remove("active"));
+  document.querySelector('#standard-chips .chip[data-standard=""]').classList.add("active");
+  document.querySelector('[data-minkw="0"]').classList.add("active");
+  document.querySelector('[data-avail="all"]').classList.add("active");
+  renderMarkers();
+});
+
+init();
+</script>
+</body>
+</html>

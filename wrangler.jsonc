@@ -1,0 +1,15 @@
+{
+  "name": "ev-charging-platform",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-08-28",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "EV_KV",
+      "id": "3f2e2b122cc84aecbd0a1de405181819"
+    }
+  ]
+}
