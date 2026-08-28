@@ -289,9 +289,9 @@ let OPERATOR_NAMES = {};
 let filters = { text: "", operators: new Set(), standard: "", minKw: 0, availableOnly: false };
 
 const map = L.map("map", { zoomControl: true }).setView([38.4, 23.7], 7);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
   maxZoom: 19,
-  attribution: "&copy; OpenStreetMap contributors",
+  attribution: "Tiles &copy; Esri",
 }).addTo(map);
 
 const clusterGroup = L.markerClusterGroup({ maxClusterRadius: 45, spiderfyOnMaxZoom: true });
