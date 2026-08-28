@@ -317,16 +317,31 @@ function passesFilters(loc) {
 
 function renderMarkers() {
   clusterGroup.clearLayers();
-  let shown = 0;
+  let shownLocations = 0;
+  let shownEvses = 0;
+  let shownAvailable = 0;
+  const shownOperators = new Set();
+
   for (const loc of ALL_LOCATIONS) {
     if (!passesFilters(loc)) continue;
-    shown++;
+    shownLocations++;
+    shownOperators.add(loc.operator);
+    for (const evse of loc.evses) {
+      shownEvses++;
+      if (evse.status === "AVAILABLE") shownAvailable++;
+    }
+
     const fast = (loc.max_kw || 0) >= 50;
     const marker = L.marker([loc.lat, loc.lng], { icon: pinIcon(fast) });
     marker.bindPopup(buildPopup(loc));
     clusterGroup.addLayer(marker);
   }
-  document.getElementById("results-count").textContent = `${shown.toLocaleString("el-GR")} από ${ALL_LOCATIONS.length.toLocaleString("el-GR")} τοποθεσίες`;
+
+  document.getElementById("results-count").textContent = `${shownLocations.toLocaleString("el-GR")} από ${ALL_LOCATIONS.length.toLocaleString("el-GR")} τοποθεσίες`;
+  document.getElementById("kpi-locations").textContent = shownLocations.toLocaleString("el-GR");
+  document.getElementById("kpi-evses").textContent = shownEvses.toLocaleString("el-GR");
+  document.getElementById("kpi-available").textContent = shownAvailable.toLocaleString("el-GR");
+  document.getElementById("kpi-operators").textContent = shownOperators.size.toLocaleString("el-GR");
 }
 
 function populateOperatorSelect(operators, operatorNames) {
@@ -376,11 +391,8 @@ async function init() {
     document.getElementById("header-stats").textContent =
       `ενημέρωση: ${new Date(data.generated_at).toLocaleString("el-GR")}`;
 
-    document.getElementById("kpi-locations").textContent = data.counts.locations.toLocaleString("el-GR");
-    document.getElementById("kpi-evses").textContent = data.counts.evses.toLocaleString("el-GR");
-    document.getElementById("kpi-available").textContent = data.counts.available_evses.toLocaleString("el-GR");
-    document.getElementById("kpi-operators").textContent = (data.operators || []).length.toLocaleString("el-GR");
-
+    // KPI cards are populated by renderMarkers() below, reflecting active filters
+    // (on first load, no filters are active, so they show the totals).
     populateOperatorSelect(data.operators || [], data.operator_names || {});
     populateStandardChips(data.connector_standards || []);
     renderMarkers();
