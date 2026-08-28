@@ -51,6 +51,37 @@
     font-size: 12px;
     color: #b9c7c1;
   }
+  #kpi-bar {
+    display: flex;
+    gap: 10px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    z-index: 998;
+  }
+  .kpi-card {
+    flex: 1;
+    min-width: 130px;
+    background: #fafcfb;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .kpi-card .kpi-value {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .kpi-card .kpi-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+  .kpi-card.accent .kpi-value { color: var(--accent-dark); }
   .app {
     flex: 1;
     display: flex;
@@ -97,7 +128,7 @@
     border-color: var(--accent);
     color: #fff;
   }
-  #map { flex: 1; }
+  #map { position: absolute; inset: 0; }
   .legend {
     font-size: 12px;
     color: var(--muted);
@@ -140,6 +171,25 @@
   <h1>⚡ EV Charging Platform — Ελλάδα</h1>
   <div class="stats" id="header-stats">Φόρτωση δεδομένων...</div>
 </header>
+
+<div id="kpi-bar">
+  <div class="kpi-card">
+    <div class="kpi-value" id="kpi-locations">—</div>
+    <div class="kpi-label">Τοποθεσίες</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value" id="kpi-evses">—</div>
+    <div class="kpi-label">Σημεία φόρτισης</div>
+  </div>
+  <div class="kpi-card accent">
+    <div class="kpi-value" id="kpi-available">—</div>
+    <div class="kpi-label">Διαθέσιμα τώρα</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-value" id="kpi-operators">—</div>
+    <div class="kpi-label">Πάροχοι</div>
+  </div>
+</div>
 
 <div class="app">
   <div id="sidebar">
@@ -204,6 +254,7 @@ const STATUS_LABELS = {
 };
 
 let ALL_LOCATIONS = [];
+let OPERATOR_NAMES = {};
 let filters = { text: "", operator: "", standard: "", minKw: 0, availableOnly: false };
 
 const map = L.map("map", { zoomControl: true }).setView([38.4, 23.7], 7);
@@ -239,7 +290,7 @@ function buildPopup(loc) {
 
   return `
     <div class="popup-title">${escapeHtml(loc.name || "Άγνωστο σημείο")}</div>
-    <div class="popup-sub">${escapeHtml(loc.address || "")}${loc.city ? ", " + escapeHtml(loc.city) : ""}<br>Πάροχος: ${escapeHtml(loc.operator || "-")}</div>
+    <div class="popup-sub">${escapeHtml(loc.address || "")}${loc.city ? ", " + escapeHtml(loc.city) : ""}<br>Πάροχος: ${escapeHtml(OPERATOR_NAMES[loc.operator] || loc.operator || "-")}</div>
     ${evseRows}
     <div style="margin-top:8px;"><a href="https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}" target="_blank" rel="noopener" style="font-size:12px;">Οδηγίες πλοήγησης →</a></div>
   `;
@@ -278,12 +329,15 @@ function renderMarkers() {
   document.getElementById("results-count").textContent = `${shown.toLocaleString("el-GR")} από ${ALL_LOCATIONS.length.toLocaleString("el-GR")} τοποθεσίες`;
 }
 
-function populateOperatorSelect(operators) {
+function populateOperatorSelect(operators, operatorNames) {
   const sel = document.getElementById("operator-select");
-  for (const op of operators) {
+  const sorted = [...operators].sort((a, b) =>
+    (operatorNames[a] || a).localeCompare(operatorNames[b] || b, "el")
+  );
+  for (const op of sorted) {
     const opt = document.createElement("option");
     opt.value = op;
-    opt.textContent = op;
+    opt.textContent = operatorNames[op] || op;
     sel.appendChild(opt);
   }
 }
@@ -317,11 +371,17 @@ async function init() {
     const res = await fetch("/api/chargers");
     const data = await res.json();
     ALL_LOCATIONS = data.locations || [];
+    OPERATOR_NAMES = data.operator_names || {};
 
     document.getElementById("header-stats").textContent =
-      `${data.counts.locations.toLocaleString("el-GR")} τοποθεσίες · ${data.counts.evses.toLocaleString("el-GR")} φορτιστές · ενημέρωση: ${new Date(data.generated_at).toLocaleString("el-GR")}`;
+      `ενημέρωση: ${new Date(data.generated_at).toLocaleString("el-GR")}`;
 
-    populateOperatorSelect(data.operators || []);
+    document.getElementById("kpi-locations").textContent = data.counts.locations.toLocaleString("el-GR");
+    document.getElementById("kpi-evses").textContent = data.counts.evses.toLocaleString("el-GR");
+    document.getElementById("kpi-available").textContent = data.counts.available_evses.toLocaleString("el-GR");
+    document.getElementById("kpi-operators").textContent = (data.operators || []).length.toLocaleString("el-GR");
+
+    populateOperatorSelect(data.operators || [], data.operator_names || {});
     populateStandardChips(data.connector_standards || []);
     renderMarkers();
     document.getElementById("loading").style.display = "none";

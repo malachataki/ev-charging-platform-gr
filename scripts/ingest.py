@@ -66,11 +66,15 @@ def to_float(value):
 
 
 def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
+    from collections import Counter
+
     locations_out = []
     operator_ids = set()
+    operator_name_votes = {}  # party_id -> Counter of operator.name seen
     standard_counts = {}
     total_evses = 0
     total_connectors = 0
+    available_evses = 0
 
     for loc in static_data.get("Locations", []):
         if loc.get("publish") is False:
@@ -83,6 +87,10 @@ def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
 
         party_id = loc.get("party_id")
         operator_ids.add(party_id)
+
+        op_name = (loc.get("operator") or {}).get("name")
+        if party_id and op_name:
+            operator_name_votes.setdefault(party_id, Counter())[op_name] += 1
 
         evses_out = []
         loc_max_kw = 0
@@ -113,6 +121,8 @@ def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
                 "connectors": connectors_out,
             })
             total_evses += 1
+            if status == "AVAILABLE":
+                available_evses += 1
 
         locations_out.append({
             "id": loc.get("id"),
@@ -127,14 +137,21 @@ def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
             "evses": evses_out,
         })
 
+    operator_names = {
+        pid: votes.most_common(1)[0][0]
+        for pid, votes in operator_name_votes.items()
+    }
+
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "counts": {
             "locations": len(locations_out),
             "evses": total_evses,
             "connectors": total_connectors,
+            "available_evses": available_evses,
         },
         "operators": sorted(o for o in operator_ids if o),
+        "operator_names": operator_names,
         "connector_standards": sorted(standard_counts.keys()),
         "locations": locations_out,
     }
