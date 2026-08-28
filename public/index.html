@@ -157,6 +157,51 @@
     color: var(--accent-dark);
     cursor: pointer;
   }
+  .btn-primary {
+    width: 100%;
+    padding: 9px 10px;
+    border: none;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-primary:hover { background: var(--accent-dark); }
+  .btn-primary:disabled { background: #9ca3af; cursor: default; }
+  #nearby-status {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 6px;
+  }
+  #nearby-list {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .nearby-item {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 9px;
+    cursor: pointer;
+    background: #fafcfb;
+  }
+  .nearby-item:hover { border-color: var(--accent); }
+  .nearby-item .nb-name { font-size: 12.5px; font-weight: 600; }
+  .nearby-item .nb-meta { font-size: 11px; color: var(--muted); margin-top: 2px; display: flex; justify-content: space-between; }
+  .occupancy-line {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    display: inline-block;
+  }
+  .occupancy-good { background: #dcfce7; color: #15803d; }
+  .occupancy-mid { background: #fef3c7; color: #b45309; }
+  .occupancy-bad { background: #fee2e2; color: #b91c1c; }
   #map { position: absolute; inset: 0; }
   .legend {
     font-size: 12px;
@@ -222,6 +267,11 @@
 
 <div class="app">
   <div id="sidebar">
+    <h2>Η θέση μου</h2>
+    <button class="btn-primary" id="find-nearby-btn">📍 Βρες κοντινούς φορτιστές</button>
+    <div id="nearby-status"></div>
+    <div id="nearby-list"></div>
+
     <h2>Αναζήτηση</h2>
     <input type="text" id="search" placeholder="Όνομα, διεύθυνση ή πόλη...">
 
@@ -311,6 +361,15 @@ function locationHasAvailable(loc) {
   return loc.evses.some(e => e.status === "AVAILABLE");
 }
 
+function occupancyLine(loc) {
+  const total = loc.evses.length;
+  const available = loc.evses.filter(e => e.status === "AVAILABLE").length;
+  let cls = "occupancy-good";
+  if (available === 0) cls = "occupancy-bad";
+  else if (available < total) cls = "occupancy-mid";
+  return `<div class="occupancy-line ${cls}">Διαθέσιμοι τώρα: ${available} / ${total}</div>`;
+}
+
 function buildPopup(loc) {
   const evseRows = loc.evses.map(e => {
     const conn = e.connectors.map(c => `${STANDARD_LABELS[c.standard] || c.standard}${c.kw ? " · " + c.kw + "kW" : ""}`).join(", ");
@@ -322,6 +381,7 @@ function buildPopup(loc) {
   return `
     <div class="popup-title">${escapeHtml(loc.name || "Άγνωστο σημείο")}</div>
     <div class="popup-sub">${escapeHtml(loc.address || "")}${loc.city ? ", " + escapeHtml(loc.city) : ""}<br>Πάροχος: ${escapeHtml(OPERATOR_NAMES[loc.operator] || loc.operator || "-")}</div>
+    ${occupancyLine(loc)}
     ${evseRows}
     <div style="margin-top:8px;"><a href="https://www.google.com/maps/dir/?api=1&destination=${loc.lat},${loc.lng}" target="_blank" rel="noopener" style="font-size:12px;">Οδηγίες πλοήγησης →</a></div>
   `;
@@ -346,8 +406,11 @@ function passesFilters(loc) {
   return true;
 }
 
+const LOCATION_MARKERS = new Map();
+
 function renderMarkers() {
   clusterGroup.clearLayers();
+  LOCATION_MARKERS.clear();
   let shownLocations = 0;
   let shownEvses = 0;
   let shownAvailable = 0;
@@ -366,6 +429,7 @@ function renderMarkers() {
     const marker = L.marker([loc.lat, loc.lng], { icon: pinIcon(fast) });
     marker.bindPopup(buildPopup(loc));
     clusterGroup.addLayer(marker);
+    LOCATION_MARKERS.set(loc.id, marker);
   }
 
   document.getElementById("results-count").textContent = `${shownLocations.toLocaleString("el-GR")} από ${ALL_LOCATIONS.length.toLocaleString("el-GR")} τοποθεσίες`;
@@ -373,6 +437,8 @@ function renderMarkers() {
   document.getElementById("kpi-evses").textContent = shownEvses.toLocaleString("el-GR");
   document.getElementById("kpi-available").textContent = shownAvailable.toLocaleString("el-GR");
   document.getElementById("kpi-operators").textContent = shownOperators.size.toLocaleString("el-GR");
+
+  if (userCoords) renderNearbyList(userCoords.lat, userCoords.lng);
 }
 
 function populateOperatorList(operators, operatorNames) {
@@ -427,6 +493,91 @@ function populateStandardChips(standards) {
     renderMarkers();
   });
 }
+
+let userMarker = null;
+let userCoords = null;
+
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function renderNearbyList(userLat, userLng) {
+  const candidates = ALL_LOCATIONS
+    .filter(loc => passesFilters(loc))
+    .map(loc => ({ loc, dist: haversineKm(userLat, userLng, loc.lat, loc.lng) }))
+    .sort((a, b) => a.dist - b.dist)
+    .slice(0, 8);
+
+  const list = document.getElementById("nearby-list");
+  list.innerHTML = "";
+  if (candidates.length === 0) {
+    document.getElementById("nearby-status").textContent = "Δεν βρέθηκαν φορτιστές με τα τρέχοντα φίλτρα.";
+    return;
+  }
+
+  for (const { loc, dist } of candidates) {
+    const available = loc.evses.filter(e => e.status === "AVAILABLE").length;
+    const item = document.createElement("div");
+    item.className = "nearby-item";
+    item.innerHTML = `
+      <div class="nb-name">${escapeHtml(loc.name || "Άγνωστο")}</div>
+      <div class="nb-meta"><span>${dist.toFixed(1)} km</span><span>${available}/${loc.evses.length} διαθέσιμοι</span></div>
+    `;
+    item.addEventListener("click", () => {
+      map.flyTo([loc.lat, loc.lng], 16, { duration: 0.6 });
+      const marker = LOCATION_MARKERS.get(loc.id);
+      if (marker) {
+        clusterGroup.zoomToShowLayer(marker, () => marker.openPopup());
+      }
+    });
+    list.appendChild(item);
+  }
+}
+
+function locateUser() {
+  const btn = document.getElementById("find-nearby-btn");
+  const status = document.getElementById("nearby-status");
+
+  if (!navigator.geolocation) {
+    status.textContent = "Ο browser σου δεν υποστηρίζει geolocation.";
+    return;
+  }
+
+  btn.disabled = true;
+  status.textContent = "Αναζήτηση θέσης...";
+
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      btn.disabled = false;
+      const { latitude, longitude } = pos.coords;
+      status.textContent = "Οι πλησιέστεροι φορτιστές (με βάση τα τρέχοντα φίλτρα):";
+
+      if (userMarker) map.removeLayer(userMarker);
+      userMarker = L.circleMarker([latitude, longitude], {
+        radius: 8, color: "#fff", weight: 2, fillColor: "#2563eb", fillOpacity: 1,
+      }).addTo(map).bindPopup("Η θέση σου");
+
+      userCoords = { lat: latitude, lng: longitude };
+      renderNearbyList(latitude, longitude);
+    },
+    (err) => {
+      btn.disabled = false;
+      if (err.code === err.PERMISSION_DENIED) {
+        status.textContent = "Δεν δόθηκε άδεια πρόσβασης στην τοποθεσία σου.";
+      } else {
+        status.textContent = "Δεν ήταν δυνατός ο εντοπισμός της θέσης σου.";
+      }
+    },
+    { enableHighAccuracy: true, timeout: 8000 }
+  );
+}
+
+document.getElementById("find-nearby-btn").addEventListener("click", locateUser);
 
 async function init() {
   try {

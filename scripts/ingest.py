@@ -27,6 +27,8 @@ import requests
 STATIC_URL = "https://electrokinisi.yme.gov.gr/public/static_files/GR.IDRO.static.data.latest.json.zip"
 DYNAMIC_URL = "https://electrokinisi.yme.gov.gr/public/static_files/GR.IDRO.dynamic.data.latest.json.zip"
 KV_KEY = "chargers"
+KV_HISTORY_KEY = "usage_history"
+HISTORY_MAX_ENTRIES = 2200  # ~30 days at one entry per 20 minutes
 
 HTTP_TIMEOUT = 60
 
@@ -75,6 +77,7 @@ def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
     total_evses = 0
     total_connectors = 0
     available_evses = 0
+    charging_evses = 0
 
     for loc in static_data.get("Locations", []):
         if loc.get("publish") is False:
@@ -123,6 +126,8 @@ def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
             total_evses += 1
             if status == "AVAILABLE":
                 available_evses += 1
+            elif status == "CHARGING":
+                charging_evses += 1
 
         locations_out.append({
             "id": loc.get("id"),
@@ -149,6 +154,7 @@ def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
             "evses": total_evses,
             "connectors": total_connectors,
             "available_evses": available_evses,
+            "charging_evses": charging_evses,
         },
         "operators": sorted(o for o in operator_ids if o),
         "operator_names": operator_names,
@@ -157,28 +163,65 @@ def build_compact_dataset(static_data: dict, dynamic_index: dict) -> dict:
     }
 
 
-def push_to_kv(payload: dict) -> None:
+def _kv_base_url(key: str) -> str:
     account_id = os.environ["CF_ACCOUNT_ID"]
-    api_token = os.environ["CF_API_TOKEN"]
     namespace_id = os.environ["CF_KV_NAMESPACE_ID"]
+    return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/values/{key}"
 
-    url = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}"
-        f"/storage/kv/namespaces/{namespace_id}/values/{KV_KEY}"
-    )
+
+def kv_get_json(key: str):
+    api_token = os.environ["CF_API_TOKEN"]
+    resp = requests.get(_kv_base_url(key), headers={"Authorization": f"Bearer {api_token}"}, timeout=HTTP_TIMEOUT)
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+def kv_put_json(key: str, payload) -> None:
+    api_token = os.environ["CF_API_TOKEN"]
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    print(f"Payload size: {len(body) / 1024:.1f} KB")
+    print(f"  {key} payload size: {len(body) / 1024:.1f} KB")
 
     resp = requests.put(
-        url,
+        _kv_base_url(key),
         headers={"Authorization": f"Bearer {api_token}"},
-        files={"value": (KV_KEY, body, "application/json")},
+        files={"value": (key, body, "application/json")},
         timeout=HTTP_TIMEOUT,
     )
     resp.raise_for_status()
     result = resp.json()
     if not result.get("success"):
-        raise RuntimeError(f"Cloudflare KV write failed: {result}")
+        raise RuntimeError(f"Cloudflare KV write failed for {key}: {result}")
+
+
+def push_to_kv(payload: dict) -> None:
+    kv_put_json(KV_KEY, payload)
+
+
+def append_usage_history(dataset: dict) -> None:
+    """Append one lightweight snapshot to the rolling usage-history KV entry.
+
+    This is the seed for a future *real* "typical usage" feature: we do not
+    fabricate any historical trend, we just start honestly recording what
+    actually happens, one snapshot at a time.
+    """
+    history = kv_get_json(KV_HISTORY_KEY)
+    if not isinstance(history, list):
+        history = []
+
+    counts = dataset["counts"]
+    history.append({
+        "t": dataset["generated_at"],
+        "total": counts["evses"],
+        "charging": counts["charging_evses"],
+        "available": counts["available_evses"],
+    })
+
+    if len(history) > HISTORY_MAX_ENTRIES:
+        history = history[-HISTORY_MAX_ENTRIES:]
+
+    kv_put_json(KV_HISTORY_KEY, history)
 
 
 def main():
@@ -197,6 +240,9 @@ def main():
 
     print("Pushing to Cloudflare KV...")
     push_to_kv(dataset)
+
+    print("Appending usage history snapshot...")
+    append_usage_history(dataset)
     print("Done.")
 
 
